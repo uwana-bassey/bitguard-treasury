@@ -203,3 +203,65 @@
     (asserts! (>= amount MIN-POOL-AMOUNT) ERR-INVALID-AMOUNT)
     ;; Pool status and user balance verification
     (let (
+        (pool (unwrap! (map-get? mixer-pools pool-id) ERR-INVALID-POOL))
+        (user-balance (default-to u0 (map-get? user-balances tx-sender)))
+      )
+      ;; Pool participation eligibility checks
+      (asserts! (get is-active pool) ERR-INVALID-POOL)
+      (asserts! (< (get participant-count pool) MAX-POOL-PARTICIPANTS)
+        ERR-POOL-FULL
+      )
+      (asserts! (>= user-balance amount) ERR-INSUFFICIENT-BALANCE)
+      ;; Update pool metrics and user balance
+      (map-set mixer-pools pool-id {
+        total-amount: (+ (get total-amount pool) amount),
+        participant-count: (+ (get participant-count pool) u1),
+        is-active: true,
+      })
+      ;; Deduct pool contribution from user balance
+      (map-set user-balances tx-sender (- user-balance amount))
+      (ok true)
+    )
+  )
+)
+
+;; EMERGENCY PROTOCOL CONTROLS
+
+;; Emergency circuit breaker for protocol suspension
+(define-public (toggle-contract-pause)
+  (begin
+    (asserts! (is-contract-owner tx-sender) ERR-NOT-AUTHORIZED)
+    (var-set contract-paused (not (var-get contract-paused)))
+    (ok (var-get contract-paused))
+  )
+)
+
+;; READ-ONLY QUERY FUNCTIONS
+
+;; Query user account balance
+(define-read-only (get-balance (user principal))
+  (default-to u0 (map-get? user-balances user))
+)
+
+;; Calculate remaining daily transaction capacity
+(define-read-only (get-daily-limit-remaining (user principal))
+  (let (
+      (current-day (/ stacks-block-height u144))
+      (current-total (default-to u0
+        (map-get? daily-transaction-totals {
+          user: user,
+          day: current-day,
+        })
+      ))
+    )
+    (- MAX-DAILY-LIMIT current-total)
+  )
+)
+
+;; Query protocol operational status
+(define-read-only (get-contract-status)
+  {
+    is-paused: (var-get contract-paused),
+    is-initialized: (var-get is-initialized),
+  }
+)
