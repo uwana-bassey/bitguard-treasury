@@ -136,3 +136,70 @@
     (let (
         (current-balance (default-to u0 (map-get? user-balances tx-sender)))
         (current-day (/ stacks-block-height u144))
+        (current-total (default-to u0
+          (map-get? daily-transaction-totals {
+            user: tx-sender,
+            day: current-day,
+          })
+        ))
+      )
+      (asserts! (>= current-balance amount) ERR-INSUFFICIENT-BALANCE)
+      (asserts! (<= (+ current-total amount) MAX-DAILY-LIMIT)
+        ERR-DAILY-LIMIT-EXCEEDED
+      )
+      ;; Execute withdrawal and update tracking
+      (map-set user-balances tx-sender (- current-balance amount))
+      (map-set daily-transaction-totals {
+        user: tx-sender,
+        day: current-day,
+      }
+        (+ current-total amount)
+      )
+      (ok true)
+    )
+  )
+)
+
+;; TREASURY POOL MANAGEMENT
+
+;; Create new treasury pool
+(define-public (create-mixer-pool
+    (pool-id uint)
+    (initial-amount uint)
+  )
+  (begin
+    ;; Protocol state and amount validation
+    (asserts! (var-get is-initialized) ERR-CONTRACT-NOT-INITIALIZED)
+    (asserts! (not (var-get contract-paused)) ERR-NOT-AUTHORIZED)
+    (asserts! (>= initial-amount MIN-POOL-AMOUNT) ERR-INVALID-AMOUNT)
+    ;; Pool ID validation and uniqueness check
+    (asserts! (< pool-id u1000) ERR-INVALID-POOL)
+    (asserts! (is-none (map-get? mixer-pools pool-id)) ERR-INVALID-POOL)
+    ;; User balance verification and pool creation
+    (let ((user-balance (default-to u0 (map-get? user-balances tx-sender))))
+      (asserts! (>= user-balance initial-amount) ERR-INSUFFICIENT-BALANCE)
+      ;; Initialize new treasury pool
+      (map-set mixer-pools pool-id {
+        total-amount: initial-amount,
+        participant-count: u1,
+        is-active: true,
+      })
+      ;; Deduct initial pool contribution
+      (map-set user-balances tx-sender (- user-balance initial-amount))
+      (ok true)
+    )
+  )
+)
+
+;; Join existing treasury pool
+(define-public (join-mixer-pool
+    (pool-id uint)
+    (amount uint)
+  )
+  (begin
+    ;; Protocol state and amount validation
+    (asserts! (var-get is-initialized) ERR-CONTRACT-NOT-INITIALIZED)
+    (asserts! (not (var-get contract-paused)) ERR-NOT-AUTHORIZED)
+    (asserts! (>= amount MIN-POOL-AMOUNT) ERR-INVALID-AMOUNT)
+    ;; Pool status and user balance verification
+    (let (
